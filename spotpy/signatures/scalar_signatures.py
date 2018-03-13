@@ -2,8 +2,15 @@
 '''
 Copyright 2017 by Tobias Houska
 This file is part of Statistical Parameter Estimation Tool (SPOTPY).
-:author: Tobias Houska, Benjamin Manns
-This module contains a framework to analyze data sets of hydrological signatures.
+:author: Tobias Houska, Benjamin Manns, Philipp Kraft
+
+This module calculates scalars from timeseries to describe signature behaviour.
+
+The signature behaviour indices are collected from different sources:
+
+- "Uncertainty in hydrological signatures" by I. K. Westerberg and H. K. McMillan, Hydrol. Earth Syst. Sci.,
+    19, doi:10.5194/hess-19-3951-2015
+
 '''
 
 
@@ -17,7 +24,30 @@ try:
 except ImportError:
     print('Please install Pandas to use these signature functions')
     
-   
+class __BaseSignature(object):
+    """
+    A basic descriptor for all types of signatures - might get extended
+    """
+    def __str__(self):
+        return type(self).__doc__
+
+
+class QuantileSignature(__BaseSignature):
+
+    def __init__(self, quantile):
+        self.percentile = quantile
+
+    def __call__(self, data, stepsize=None):
+        return np.percentile(data, self.percentile)
+
+get_q0_01 = QuantileSignature(0.01)
+get_q0_1 = QuantileSignature(0.1)
+get_q1 = QuantileSignature(0.1)
+
+
+def get_mean_flow(data, stepsize=None):
+    return np.mean(data)
+
 
 class SuitableInput:
     def __init__(self, datm):
@@ -259,7 +289,8 @@ def getSlopeFDC(data, comparedata=None, mode='get_signature'):
     :type comparedata: list
     :param mode: which mode of calculation should be used: one of get_signature, get_raw_data or calc_Dev
     :type mode: string
-    :return: the calculation will be return which is set by mode, this might be float numbers or war data in dict format which can be plot to visualize the signatures
+    :return: the calculation will be return which is set by mode, this might be float numbers or war data in dict format
+             which can be plot to visualize the signatures
     :rtype: dict / float
 
     """
@@ -269,9 +300,9 @@ def getSlopeFDC(data, comparedata=None, mode='get_signature'):
 
 
 def __calcSlopeFDC(data):
-    upper33_data = np.sort(data)[np.sort(data) >= 1.33 * np.mean(data)]
+    upper33_data = np.sort(data[data >= 1.33 * np.mean(data)])
     upper66_data = np.sort(data)[np.sort(data) >= 1.66 * np.mean(data)]
-    if upper33_data.__len__() > 0 and upper66_data.__len__() > 0:
+    if upper33_data > 0 and upper66_data > 0:
         if upper66_data[0] != 0:
             return upper33_data[0] / upper66_data[0]
         else:
@@ -280,8 +311,7 @@ def __calcSlopeFDC(data):
         return 0.0
 
 
-def getAverageFloodOverflowPerSection(data, comparedata=None, mode='get_signature', datetime_series=None,
-                                      threshold_value=3):
+class AverageFloodOverflowPerSection(threshold_value=3):
     """
     All measurements are scanned where there are overflow events. Based on the section we summarize events per year,
     month, day, hour.
@@ -308,11 +338,21 @@ def getAverageFloodOverflowPerSection(data, comparedata=None, mode='get_signatur
     :return: deviation of means of overflow value or raw data
     :rtype: dict / float
     """
+    def __init__(self, threshold_value=3):
+        self.threshold_value = threshold_value
+
+    def __call__(self, data: list, stepsize):
+        """
+
+        :param data: the timeseries
+        :param stepsize: The timeseries step size in seconds
+        :return:
+        """
 
     if datetime_series is None:
         raise HydroSignaturesError("datetime_series is None. Please specify a datetime_series.")
 
-    if data.__len__() != datetime_series.__len__():
+    if len(data) != datetime_series.__len__():
         raise HydroSignaturesError("Simulation / observation data and the datetime_series have not the same length")
 
     basics = _SignaturesBasicFunctionality(data, comparedata=comparedata, mode=mode)
@@ -740,6 +780,7 @@ def getQ95(data, comparedata=None, mode='get_signature'):
 
     See paper "Uncertainty in hydrological signatures" by I. K. Westerberg and H. K. McMillan, Hydrol. Earth Syst. Sci.,
     19, 3951 - 3968, 2015 (hess-19-3951-2015.pdf, page 3956)
+
 
     :param data: data to analyze
     :type data: list
