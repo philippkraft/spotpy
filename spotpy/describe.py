@@ -99,10 +99,10 @@ if sys.version_info > (3, 5):
 
         caption_characters = '=-#~*+^'
 
-        def __init__(self, setup_or_sampler):
+        def __init__(self, setup_or_sampler=None):
             """
             Creates a reStructuredText description of a sampler or a setup
-            :param setup_or_sampler: Either a spotpy.algorithm sampler or a spotpy setup
+            :param setup_or_sampler: Either a spotpy.algorithm sampler or a spotpy setup or None
             """
             if isinstance(setup_or_sampler, _algorithm):
                 self.setup = setup_or_sampler.setup
