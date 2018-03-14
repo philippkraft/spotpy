@@ -24,7 +24,7 @@ except ImportError:
 
 #https://docs.python.org/3/library/unittest.html
 
-
+"""
 
 class TestSignatures(unittest.TestCase):
 
@@ -404,7 +404,7 @@ class TestSignatures(unittest.TestCase):
             self.assertEqual(type(1.0), type(float(sig_sig_1)))
             self.assertEqual(type({}), type(sig_sig_2))
             self.assertEqual(type(1.0), type(float(sig_dev)))
-
+"""
 if __name__ == '__main__':
     if test==True: # Happens if Pandas can be imported (not on travis so far)
         unittest.main()
