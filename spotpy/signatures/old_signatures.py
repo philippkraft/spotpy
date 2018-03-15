@@ -197,44 +197,6 @@ class _SignaturesBasicFunctionality(object):
                 return 0
 
 
-def getSlopeFDC(data, comparedata=None, mode='get_signature'):
-    """
-    The main idea is to use a threshold by the mean of the data and use the first occurrence of a 33% exceed and a 66%
-    exceed and calculate the factor of how many times is the 66% exceed higher then the 33% exceed.
-    If 33% or 66% exceed does not exists then just give 0 back for a slope of 0 (horizontal line)
-
-    :math:`slope = \\frac{treshold(mean*1,33 <= data)}{treshold(mean*1,66 <= data)}`
-
-    See paper "Uncertainty in hydrological signatures" by I. K. Westerberg and H. K. McMillan, Hydrol. Earth Syst. Sci.,
-    19, 3951 - 3968, 2015 (hess-19-3951-2015.pdf, page 3956)
-
-    :param data: data to analyze
-    :type data: list
-    :param comparedata: data to analyze and compare with variable data
-    :type comparedata: list
-    :param mode: which mode of calculation should be used: one of get_signature, get_raw_data or calc_Dev
-    :type mode: string
-    :return: the calculation will be return which is set by mode, this might be float numbers or war data in dict format
-             which can be plot to visualize the signatures
-    :rtype: dict / float
-
-    """
-    basics = _SignaturesBasicFunctionality(data, comparedata=comparedata, mode=mode)
-
-    return basics.analyze(__calcSlopeFDC)
-
-
-def __calcSlopeFDC(data):
-    upper33_data = np.sort(data[data >= 1.33 * np.mean(data)])
-    upper66_data = np.sort(data)[np.sort(data) >= 1.66 * np.mean(data)]
-    if upper33_data > 0 and upper66_data > 0:
-        if upper66_data[0] != 0:
-            return upper33_data[0] / upper66_data[0]
-        else:
-            return 0.0
-    else:
-        return 0.0
-
 
 def  getAverageFloodOverflowPerSection(data, comparedata, mode, datetime_series, threshold_value):
     """
