@@ -84,17 +84,7 @@ We want to make this task as easy as possible. Some features you can use with th
   * Exponential Transform Shaping Factor
   * Sum of Absolute Error Residuals
 
-* Wide range of hydrological signatures functions to validate the sampled results:
-
-  * Slope
-  * Flooding/Drought events
-  * Flood/Drought frequency
-  * Flood/Drought duration
-  * Flood/Drought variance
-  * Mean flow
-  * Median flow
-  * Skewness
-  * compare percentiles of discharge
+* Wide range of hydrological signature behaviour functions are under current development
   
 * Prebuild parameter distribution functions:
 
