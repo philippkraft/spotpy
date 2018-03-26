@@ -14,4 +14,4 @@ by Gupta et al 2008 [(DOI: 10.1002/hyp.6989)](https://doi.org/10.1002/hyp.6989)_
 """
 
 
-from . import scalar_signatures as scalar
+

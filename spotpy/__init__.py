@@ -34,7 +34,6 @@ from . import algorithms         # Contains all the different algorithms impleme
 from . import parameter          # Contains different distributions to discribe the prior information for every model parameter
 from . import analyser           # Contains some examples to analyse the results of the different algorithms
 from . import objectivefunctions # Quantifies goodness of fit between simulation and evaluation data with objectivefunctions
-from . import signatures         # Quantifies goodness of fit between simulation and evaluation data with hydrological signatures
 from . import likelihoods        # Quantifies goodness of fit between simulation and evaluation data with likelihood functions
 from . import examples           # Contains tutorials how to use SPOTPY
 from . import describe           # Contains some helper functions to describe smaplers and setups

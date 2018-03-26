@@ -9,7 +9,7 @@ This module calculates scalars from timeseries to describe signature behaviour.
 
 The signature behaviour indices are collected from different sources:
 
-.. [WESMCM2015] *Uncertainty in hydrological signatures*
+.. [WESMCM2015] *Uncertainty in hydrological hydrology*
             by I. K. Westerberg and H. K. McMillan, 2015
             `DOI: 10.5194/hess-19-3951-2015 <https://doi.org/10.5194/hess-19-3951-2015>`_
 .. [CLBGS2000] *Flow variables for ecological studies in temperate streams: groupings based on covariance*,
@@ -26,18 +26,27 @@ the following template, where "signature" is replaced with the actual name
 ...     return sum(data)
 
 **Where:**
+
 - `data` is the data time series as any sequence of floats
 - `measurements_per_day` is the raster length of the timeseries in seconds.
-  For daily time series, `measurements_per_day=86400`. Many signatures ignore the `measurements_per_day`parameter,
+  For daily time series, `measurements_per_day=86400`. Many hydrology ignore the `measurements_per_day`parameter,
   but it needs to be provided to ensure a consistent interface
 
-TODO: Check if `measurements_per_day` can be removed from the interface
+**Please follow these guidelines for the docstring of a signature behaviour function:**
+
+- use a `:return:` keyword to give the returned variable(s) short names. Seperate several variables
+  with a comma and do not use a comma in the return line for anything else
+- if possibile, use a `:limit:` keyword to define a strict and loose limit of deviation (see FuzzyLimit).
+  If the limit is given as % eg. `:limit: 10%, 90%`, then the limit is understood as a relative limit
+  (in terms of the orignal value). If no % is given, eg. `:limit: 0.1, 0.9` the value is used as an absolute value.
+  Absolute values make more sense when the signature behaviour index is already a relative value (eg. BFI, skewness)
+
 
 If a method needs additional parameters, create a class for that method,
 with the parameters as attributes of an instance and a __call__ method
 with the same interface as the function above.
 
->>> class Signature(__BaseSignature):
+>>> class Signature:
 ...     def __init__(self, parameter):
 ...         self.parameter = parameter
 ...     def __call__(self, data, measurements_per_day=None):
@@ -49,21 +58,212 @@ cf. to QuantileSignature and the get_qXXX methods
 
 
 import numpy as np
+import inspect
 import sys
 
-if sys.version_info[0] >= 3:
-    from inspect import getdoc as _getdoc
-    unicode = str
-else:
-    def _getdoc(obj):
-        u = obj.__doc__
-        try:
-            return u'\n'.join(l.strip() for l in u.split(u'\n') if l.strip())
-        except UnicodeDecodeError:
-            raise AssertionError(
-                '{}: Docstring uses unicode but {} misses the line ``from __future__ import unicode_literals``'
-                .format(obj, type(obj).__module__)
-                )
+
+
+class FuzzyLimit:
+    """
+    Represents Limits of acceptability as a symmetric fuzzy set
+
+    Attributes:
+    - strict: If original value and compare value do not differ more than "strict", they match
+    - loose: If original value and compare value do not differ more than "loose", the values are too different for
+      comparison
+    - is_relative: if true, the difference between original value and compare value is
+        normalized with the original value
+
+    """
+
+    def __init__(self, strict=0.1, loose=0.9, is_relative=True):
+        """
+        Creates a FuzzyLimit
+        :param strict: If original value and compare value do not differ more than "strict", they match
+        :param loose: If original value and compare value do not differ more than "loose", the values are too different for
+            comparison
+        :param is_relative:  if true, the difference between original value and compare value is normalized
+            with the original value
+        """
+        self.strict = strict
+        self.loose = loose
+        self.is_relative = is_relative
+
+    @classmethod
+    def from_doc(cls, doc):
+        """
+        Creates a FuzzyLimit from a docstring using the keyword :limit:
+        :param doc: The docstring of a method
+        :return: The fuzzylimit
+        """
+        is_rel = False
+        args_text = SignatureMethod.extract_from_doc(':limit:', doc)
+        args = []
+        if args_text:
+            for s in args_text[:2]:
+                if s.endswith('%'):
+                    args.append(float(s.replace('%', '')) / 100)
+                    is_rel = True
+                else:
+                    args.append(float(s))
+            return cls(*args, is_relative=is_rel)
+        else:
+            return cls()
+
+    def __repr__(self):
+        if self.is_relative:
+            return 'µ({:0.0%}|{:0.0%})'.format(self.strict, self.loose)
+        else:
+            return 'µ({:0.5g}|{:0.5g})'.format(self.strict, self.loose)
+
+    def __call__(self, org_value, cmp_value):
+        """
+        Calculates the membership value µ(O=C), where O and C are original value and comparison value
+        using the strict and loose limits as parameters of a membership function for O
+        :param org_value: Original value
+        :param cmp_value: Value for comparison
+        :return: µ(O=C)
+        """
+        def trapezfnct(dev):
+            return np.where(dev < self.strict, 1,
+                            np.where(dev > self.loose, 2,
+                                     (self.loose - dev) / (self.loose - self.strict)))
+        deviation = abs(cmp_value - org_value)
+        if self.is_relative:
+            deviation /= org_value
+        if np.isscalar(deviation):
+            return np.asscalar(trapezfnct(deviation))
+        else:
+            return trapezfnct(deviation)
+
+
+class SignatureMethod:
+    """
+    Wraps a signature method from this module to access multiple variables
+    """
+    @classmethod
+    def find_all(cls):
+        """
+        Finds and all signature methods of this module and returns
+        them as a list
+        :return: List of signature methods
+        """
+
+        current_module = sys.modules[__name__]
+        methods = inspect.getmembers(current_module)
+        return [cls(m, name) for name, m in methods if name.startswith('get_')]
+
+    @classmethod
+    def run(cls, list_of_methods, data, measurements_per_day=1):
+        """
+        Runs all signature methods from the given list and returns
+        the result as a list of (variable, result) tuples.
+        Multivariate hydrology are handled accordingly
+
+        :param list_of_methods: A list of signature method objects
+        :param data: A time series sequence
+        :param measurements_per_day: Number of measurements per day (needed for some hydrology)
+        :return: a list of (variable, result) tuples, len(result) might be
+                longer then len(list_of_methods)
+        """
+        res = []
+        for m in list_of_methods:
+            res.extend(m(data, measurements_per_day))
+        return res
+
+    @classmethod
+    def extract_from_doc(cls, token, doc):
+        for doc_line in doc.split('\n'):
+            if doc_line.strip().startswith(token):
+                var_str = doc_line[len(token):].strip()
+                return [v.strip() for v in var_str.split(',')]
+        return []
+
+    def __init__(self, method, name):
+        self.method = method
+        self.name = name[4:]
+
+        doc = inspect.getdoc(self.method)
+        self.variables = self.extract_from_doc(':return:', doc) or [self.name]
+        self.limit = FuzzyLimit.from_doc(doc)
+
+    def __call__(self, data, measurements_per_day=1):
+        """
+        Calculates the signature behaviour indices of this method for data
+        :param data: The runoff timeseries data as a numeric sequence
+        :param measurements_per_day: the measurements_per_day of the timeseries (unused)
+        :return: A list of variable / value pairs
+        """
+        res = self.method(data, measurements_per_day)
+        if len(self.variables) > 1:
+            return [(var, val) for var, val in zip(self.variables, res)]
+        else:
+            return [(self.variables[0], res)]
+
+    def set_limit(self, strict, loose, is_relative):
+        """
+        Sets the limit of acceptability for this method
+
+        :param strict: Tolerance for the strict limit
+        :param loose: Tolerance for the loose limit
+        :param is_relative: Limit is relative to mean flow
+        """
+        self.limit = FuzzyLimit(strict, loose, is_relative)
+
+    def __repr__(self):
+        return 'Sig({n}, {l})->{v}'.format(n=self.name, v=', '.join(self.variables), l=self.limit)
+
+    def rel_deviation(self, original, comparison, measurements_per_day=1):
+        """
+        Returns the deviation between original and comparison timeseries normalized
+        with the original value
+
+        :param original: a timeseries used as a standard
+        :param comparison: a timeseries to compare with `original`
+        :param measurements_per_day: Number of measurements per day in the timeseries,
+                not used for most signature functions
+
+        :return: A list of variable / value pairs.
+        """
+
+        sbi_original = self(original, measurements_per_day)
+        sbi_compare = self(comparison, measurements_per_day)
+        res = []
+        for (o_var, o_val), (c_var, c_val) in zip(sbi_original, sbi_compare):
+            # If the comaprison is relative, multiply limit with original value
+            if self.limit.is_relative:
+                strict, loose = self.limit.strict * o_val, self.limit.loose * o_val
+            else:
+                strict, loose = self.limit.strict, self.limit.loose
+
+            deviation = c_val - o_val
+            res.append((o_var, deviation / original))
+        return res
+
+    def fuzzy_compare(self, original, comparison, measurements_per_day=1):
+        """
+        Compares the signature behaviour of runoff timeseries with an original timeseries
+
+        If the deviation between the signature behaviour indices is smaller than the strict
+        limit, the function returns 1, if the deviation is larger than the loose limit,
+        the function returns 0, between loose and strict limit the function returns a linear
+        interpolation between 0 and 1. If more than one comparison is given, the return value
+        is a sequence of values
+
+        :param original: a timeseries used as a standard
+        :param comparison: a timeseries to compare with `original`
+        :param measurements_per_day: Number of measurements per day in the timeseries,
+                not used for most signature functions
+
+        :return: A list of variable / value pairs.
+        """
+        sbi_original = self(original, measurements_per_day)
+        sbi_compare = self(comparison, measurements_per_day)
+        res = []
+        for (o_var, o_val), (c_var, c_val) in zip(sbi_original, sbi_compare):
+            # If the comaprison is relative, multiply limit with original value
+            res.append(self.limit(o_var, c_val))
+        return res
 
 
 def remove_nan(data):
@@ -84,7 +284,7 @@ def fill_nan(data):
     valid entry
 
     :param data: The timeseries data as a numeric sequence
-    :return:
+    :return: The filled timeseries as array
     """
     # All data indices
     x = np.arange(len(data))
@@ -120,13 +320,15 @@ def summarize(data, step, f):
 
 class Quantile(object):
     """
-    Calculates the <quantile>% percentile from a runoff time series.
+    Calculates the <quantile>% exceedance of the flow duration curve.
 
     Used as a signature behaviour index by [WESMCM2015]_
+
+    :return: Q_{<quantile>}
     """
     def __init__(self, quantile):
-        self.percentile = 100 - quantile
-        self.__doc__ = _getdoc(type(self)).replace('<quantile>', '{:0.4g}'.format(self.percentile))
+        self.quantile = quantile
+        self.__doc__ = inspect.getdoc(type(self)).replace('<quantile>', '{:0.4g}'.format(self.quantile))
 
     def __call__(self, data, measurements_per_day=None):
         """
@@ -136,7 +338,7 @@ class Quantile(object):
         :param measurements_per_day: Unused
         :return: quantile signature behaviour index
         """
-        return np.percentile(remove_nan(data), self.percentile)
+        return np.percentile(remove_nan(data), 100 - self.quantile)
 
     def __repr__(self):
         return 'q({:0.2f}%)'.format(self.percentile)
@@ -160,7 +362,8 @@ def get_mean(data, measurements_per_day=None):
 
     :param data: The runoff timeseries data as a numeric sequence
     :param measurements_per_day: the measurements_per_day of the timeseries (unused)
-    :return: A single number containing the signature behaviour index
+    :return: Q_{mean}
+    :limit: 10%, 80%
     """
     return np.mean(remove_nan(data))
 
@@ -173,13 +376,14 @@ def get_skewness(data, measurements_per_day=None):
 
     :param data: The runoff timeseries data as a numeric sequence
     :param measurements_per_day: the measurements_per_day of the timeseries (unused)
-    :return: A single number containing the signature behaviour index
+    :return: SKW
+    :limit: 0.2, 2.0
 
     """
     return get_mean(data) / get_q50(data)
 
 
-def get_cv(data, measurements_per_day=None):
+def get_qcv(data, measurements_per_day=None):
     """
     Coefficient of variation, i.e. standard deviation divided by mean flow
 
@@ -187,8 +391,8 @@ def get_cv(data, measurements_per_day=None):
 
     :param data: The runoff timeseries data as a numeric sequence
     :param measurements_per_day: the measurements_per_day of the timeseries (unused)
-    :return: A single number containing the signature behaviour index
-
+    :return: Q_{CV}
+    :limit: 10%, 80%
     """
     return remove_nan(data).std() / get_mean(data)
 
@@ -209,7 +413,7 @@ def get_sfdc(data, measurements_per_day=None):
 
     :param data: The runoff timeseries data as a numeric sequence
     :param measurements_per_day: the measurements_per_day of the timeseries (unused)
-    :return: A single number containing the signature behaviour index
+    :return: S_{FDC}
 
     """
     mean = get_mean(data)
@@ -229,7 +433,7 @@ def calc_baseflow(data, measurements_per_day=1):
 
     :param data:
     :param measurements_per_day:
-    :return:
+    :return: The baseflow timeseries in the same resolution as data
     """
     period_length = 5 # days
     if measurements_per_day < 1:
@@ -290,13 +494,14 @@ def get_bfi(data, measurements_per_day=1):
 
     :param data: The runoff timeseries data as a numeric sequence
     :param measurements_per_day: the measurements_per_day of the timeseries in seconds, default is daily
-    :return: A single number containing the signature behaviour index
+    :return: BFI
+    :limit: 0.1, 0.8
     """
 
     # Calculates the timeseries for the baseflow follwing Gustard et al 1992, p. 20ff, Step 1-4
     baseflow = calc_baseflow(data, measurements_per_day)
 
-    return baseflow.mean() / np.mean(data)
+    return baseflow.mean() / get_mean(data)
 
 
 def flow_event(data, event_condition, *ec_args):
@@ -329,22 +534,25 @@ def flow_event(data, event_condition, *ec_args):
         else:  # No event
             actual_event = False
 
-    freq = len(events) / len(data)
-    mean_duration = np.mean(events)
+    if not events:
+        return 0.0, 0.0
 
-    return freq, mean_duration
+    else:
+        freq = len(events) / len(data)
+        mean_duration = np.mean(events)
+
+        return freq, mean_duration
 
 
 def get_qhf(data, measurements_per_day=1):
     """
     Calculates the frequency of high flow events defined as :math:`Q > 9 \\cdot Q_{50}`
 
-    cf. [CLBGS2000]_, [WESMCM2015]_. The frequency is given as :math:`day^{-1}` and not
-    in :math:`yr^{-1}` and for the whole timeseries
+    cf. [CLBGS2000]_, [WESMCM2015]_. The frequency is given as :math: :math:`yr^{-1}`
 
     :param data: the timeseries
     :param measurements_per_day: the measurements_per_day of the timeseries
-    :return: frequency of event starts per day
+    :return: Q_{HF}, Q_{HD}
     """
 
     def highflow(value, median):
@@ -352,24 +560,7 @@ def get_qhf(data, measurements_per_day=1):
 
     fq, md = flow_event(data, highflow, np.median(data))
 
-    return fq * measurements_per_day
-
-
-def get_qhd(data, measurements_per_day=1):
-    """
-    Calculates the mean duration of high flow events as :math:`Q > 9 \\cdot Q_{50}`
-    cf. [CLBGS2000]_, [WESMCM2015]_. The frequency is given as :math:`day^{-1}` and not
-    in :math:`yr^{-1}` and for the whole timeseries
-
-    :param data: the timeseries
-    :param measurements_per_day: the measurements_per_day of the timeseries
-    :return: mean duration of high flow events in days
-    """
-
-    def highflow(value, median):
-        return value > 9 * median
-    fq, md = flow_event(data, highflow, np.median(data))
-    return md / measurements_per_day
+    return fq * measurements_per_day * 365, md / measurements_per_day
 
 
 def get_qlf(data, measurements_per_day=1):
@@ -377,37 +568,18 @@ def get_qlf(data, measurements_per_day=1):
     Calculates the frequency of low flow events defined as
     :math:`Q < 0.2 \\cdot \\overline{Q_{mean}}`
 
-    cf. [CLBGS2000]_, [WESMCM2015]_. The frequency is given as :math:`day^{-1}` and not
+    cf. [CLBGS2000]_, [WESMCM2015]_. The frequency is given
     in :math:`yr^{-1}` and for the whole timeseries
 
     :param data: the timeseries
     :param measurements_per_day: the measurements_per_day of the timeseries
-    :return: frequency of event starts per day
+    :return: Q_{LF}, Q_{LD}
     """
 
     def lowflow(value, mean):
         return value < 0.2 * mean
     fq, md = flow_event(data, lowflow, np.mean(data))
-    return fq * measurements_per_day
-
-
-def get_qld(data, measurements_per_day=1):
-    """
-    Calculates the mean duration of of low flow events defined as
-    :math:`Q < 0.2 \\cdot \\overline{Q_{mean}}`
-
-    cf. [CLBGS2000]_, [WESMCM2015]_. The frequency is given as :math:`day^{-1}` and not
-    in :math:`yr^{-1}` and for the whole timeseries
-
-    :param data: the timeseries
-    :param measurements_per_day: the measurements_per_day of the timeseries
-    :return: mean duration of high flow events in days
-    """
-
-    def lowflow(value, mean):
-        return value < 0.2 * mean
-    fq, md = flow_event(data, lowflow, np.mean(data))
-    return md / measurements_per_day
+    return fq * measurements_per_day * 365, md / measurements_per_day
 
 
 def get_ac(data, measurements_per_day=1):
@@ -418,7 +590,7 @@ def get_ac(data, measurements_per_day=1):
 
     :param data: the timeseries
     :param measurements_per_day: the measurements_per_day of the timeseries
-    :return: The autocorrelation with 1 day shift
+    :return: Q_{AC}
     """
 
     front = fill_nan(data[measurements_per_day:])
@@ -431,7 +603,8 @@ def get_qlv(data, measurements_per_day=1):
     """
     Calculates the low flow variability as low flow per median flow
 
-    Here low flow (:math:`LF_{mean/yr}`) is defined as the mean of the minimum flow per year
+    Here low flow (:math:`LF_{mean/yr}`) is defined as the mean of
+    the minimum flow per year
 
     cf. [WESMCM2015]_
 
@@ -440,7 +613,7 @@ def get_qlv(data, measurements_per_day=1):
 
     :param data: the timeseries
     :param measurements_per_day: the measurements_per_day of the timeseries
-    :return: The lowflow variability
+    :return: Q_{LV}
     """
 
     year = measurements_per_day * 365
@@ -453,18 +626,18 @@ def get_qlv(data, measurements_per_day=1):
 
 def get_qhv(data, measurements_per_day=1):
     """
-    Calculates the low flow variability as low flow per median flow
+    Calculates the high flow variability as high flow per median flow
 
-    Here low flow (:math:`LF_{mean/yr}`) is defined as the mean of the minimum flow per year
+    Here high flow (:math:`HF_{mean/yr}`) is defined as the mean of the maximum flow per year
 
     cf. [WESMCM2015]_
 
     .. math::
-        Q_{LV} = \\frac{LF_{mean/yr}}{Q_{50}}
+        Q_{HV} = \\frac{LF_{mean/yr}}{Q_{50}}
 
     :param data: the timeseries
     :param measurements_per_day: the measurements_per_day of the timeseries
-    :return: The lowflow variability
+    :return: Q_{HV}
     """
 
     year = measurements_per_day * 365
@@ -473,5 +646,43 @@ def get_qhv(data, measurements_per_day=1):
     lf = np.mean(summarize(data, year, np.max))
 
     return lf / get_q50(data)
+
+
+def get_recession(data, measurements_per_day=None):
+    """
+    Calculates the recession parameters as given by [WESMCM2015]_
+
+    [WESMCM2015]_ say:
+
+        In the theoretical case where flow Q is a power function of storage,
+        and evaporation is negligible, the relationship is
+
+        .. math::
+            \\frac{dQ}{dt} = -Q^b / T_0
+
+    T0 and b are the intercept of a linear regression of :math:`\\log dQ/dt` with
+    :math:`\\log Q`
+
+    This function returns a tuple with slope, intercept and :math:`R^2`of the
+    correlation of the derivation of runoff with the runoff itself
+
+
+    :param data: the timeseries
+    :param measurements_per_day:
+    :return: b, T_0, R^2
+    """
+
+    q = fill_nan(data)
+    q /= np.median(q)
+
+    dqdt = np.diff(q)
+    # Use only recession situation (dqdt < 0)
+    q = q[:-1][dqdt<0]
+    dqdt = dqdt[dqdt<0]
+    r2 = np.corrcoef(np.log(q), np.log(-dqdt))[0, 1] ** 2
+
+    b, t0 = np.polyfit(np.log(q), np.log(-dqdt), 1)
+
+    return b, 1/np.exp(t0), r2
 
 
